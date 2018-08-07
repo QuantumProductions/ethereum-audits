@@ -1,0 +1,133 @@
+Eth-Adventure Smart Contract Audit
+
+Overview:
+
+Eth-Adventure was developed as a proof of concept for a designated author updating content on a Smart Contract with input from readers. Readers of the story vote on what path they want the story to take. The author updates the story with a result of what happened and new prompts.
+
+Original Contract Source:
+
+```
+pragma solidity ^0.4.18;
+
+contract Story {
+  address public developer = 0x003BDf0961d5D6cda616ac8812B63E6De5910bc9;
+
+  string[] public prompts;
+  uint public iteration = 0;
+  string[] public history; //choice history
+
+  mapping (uint => uint) votes;
+  uint public numVotes = 0;
+  string[] public choices;
+  uint public numChoices = 0;
+
+  function Story() public {
+    prompts.push("..Lambo drifting across the lunar sand.. the smell of burning garlic awakens you from your slumber. You stumble towards the burning. A plate of roasted garlic, burnt to a crisp atop your new BREAD-CHAMP mining rig. Before you can take another whiff, your BREAD-CHAMP catches fire. Molten solder melts a hole through your apartment floor and your rig plummets ten feet. A flicker on your smartwatch tells you that all crypto has jumped another 10 points towards the Moon! You begin to notice your headache. Then you notice your doge, crying in the hallway. He needs a walk but your crypto is melting and you almost had enough to buy 1 Lambo tire.");
+    choices.push("Take your doge for a walk.");
+    choices.push("Follow your crypto's dip into the earth.");
+  }
+
+  modifier onlyDev() {
+    require(msg.sender == developer);
+    _;
+  }
+
+  function castVote(uint optionNumber) public payable  {
+    require(msg.value >= 10000000000000000);
+    require(optionNumber == 0 || optionNumber == 1);
+    votes[optionNumber] = votes[optionNumber] + 1;
+    numVotes = numVotes + 1;
+  }
+
+  function next(string newPrompt, string choice0, string choice1) public onlyDev {
+    if (votes[0] >= votes[1]) {
+      history.push(choices[0]);
+    } else {
+      history.push(choices[1]);
+    }
+
+    votes[0] = 0;
+    votes[1] = 0;
+    numVotes = 0;
+
+    prompts.push(newPrompt);
+    choices[0] = choice0;
+    choices[1] = choice1;
+    iteration = iteration + 1;
+
+    payout();
+  }
+
+  function payout() public {
+    require(this.balance >= 1000000000000000);
+    developer.transfer(this.balance);
+  }
+}
+```
+
+Issues
+
+1: Reader's vote may be unintentionally be applied to the prompt after what they intended.
+
+When a reader submits a vote they do so with an idea of the current prompt. By the time their vote transaction gets mined, the story may have advanced from the author's input. The vote, coming in as a selection index only, will apply to the new prompt without the reader's knowledge of the new prompt data.
+
+Recommended fix:
+
+Update the castVote function to
+
+```
+function castVote(uint optionNumber, uint storyIndex) public payable  {
+  require(storyIndex == iteration);
+  ...
+```
+
+2: Author's input may not match latest vote count.
+
+When the author submits their new story updates, they do so based on their knowledge of which prompt has the most eth voted. By the time their transaction is mined with the new story progression a reader could have tipped the eth balance in favor of what was previously the losing prompt.
+
+This would show in the history that the story progression contradicted the reader's votes which goes against the thesis of the project.
+
+Recommended fix:
+
+Modify the next function to include parameters for both branches of the story. The author should supply branches for both possibilities. At the time of the transaction mining the contract will check current eth votes and choose accordingly.
+
+```
+function next(string newPrompt, string choice0, string choice1, string newPrompt2, string choice20, string choice21) public onlyDev returns (bool) {
+    if (votes[0] >= votes[1]) {
+      history.push(choices[0]);
+      StoryUpdate(choices[0], newPrompt);
+      prompts.push(newPrompt);
+      choices[0] = choice0;
+      choices[1] = choice1;
+    } else {
+      history.push(choices[1]);
+      StoryUpdate(choices[0], newPrompt);
+      prompts.push(newPrompt2);
+      choices[0] = choice20;
+      choices[1] = choice21;
+    }
+    ...
+```
+
+3: Eth safe math
+
+Unchecked addition occurs when adding votes and iteration. It seems unlikely that enough iterations or eth should come in as to overflow uint yet for the sake of best practice safe math functions should be implemented guarding against the overflow.
+
+Recommendation: Re-evaluate vote limits and iteration advancement. Implement overflow checks when adding.
+
+4: No withdrawal if author abandons
+
+Readers have no mitigation if the author abandons the story, even if they intended to continue the story.
+
+Recommendation: Decide on a block interval. If this many blocks pass between updates, a reader can call the contract to withdraw their current eth. In addition to the votes variable, store reader votes in
+
+`mapping (address => uint) readerVotes;`
+
+5: No specifed end
+
+As is, the contract has no way of indicating the story is finished. The author has no way of marking that the story is completed without updating all four prompt texts. But in this case, the readers could still send eth to the contract.
+
+Recommendation: Consider allowing the author to mark the story as ending when updating the prompts. The ended story would not accept further eth or story updates. 
+
+
+

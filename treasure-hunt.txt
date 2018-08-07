@@ -1,0 +1,99 @@
+Treasuer Hunt Smart Contract Audit
+
+Overview:
+
+Treasure Hunt was developed as a proof of concept for storing treasure in a contract, protected by a secret key. The contract creators would run a real-life treasure hunt where players would hunt down the key. The first to submit the correct key to the contract wins the treasure hunt and the eth!
+
+Original Contract Source:
+
+```
+pragma solidity ^0.4.20;
+
+contract TreasureHunt {
+  bool active = false;
+  bytes32 private solution = 0x41b1a0649752af1b28b3dc29a1556eee781e4a4c3a1f7f53f90fa834de098c4d;
+  address public developer = 0xE5556c8F28245722222851b8E756adAd9E039E39;
+
+  event TreasureHuntFunded(address funder, uint amount);
+
+  function fund() public payable returns (bool) {
+      require(msg.value > 0);
+      TreasureHuntFunded(msg.sender, msg.value);
+      return true;
+  }
+
+  function startHunt() public returns (bool) {
+     require(msg.sender == developer);
+     active = true;
+   }
+
+  function validate(string _answer) public returns (bool) {
+    if (active && keccak256(_answer) == solution) {
+        msg.sender.transfer(this.balance);
+        active = false;
+        return true;
+    }
+    
+    return false;
+  }
+}
+```
+
+Issues:
+
+1: Critical - Vulnerable to Malicious Miners.
+
+The contract evaluates a submitted solution by hashing it and comparing with the known solution hash. A malicious miner could submit a user's input then, on a successful solution, submit their own transaction without validating the user's, hoping to win the race and the treasure hunt.
+
+Recommendation: Implement Commit+Reveal pattern by doin;
+
+function submit(string _hash) public returns (bool) {
+    require(active == true);
+    userSubmissions[msg.sender] = _hash;
+    userSubmissionBlocks[msg.sender] = block.number;
+    ...
+}
+
+function minimumWait(public pure returns (uint)) {
+  return 10;
+}
+
+function reveal(string _solution, *string _salt?*) public returns (bool) {
+  uint num = userSubmissionBlocks[msg.sender];
+  require(num > 0);
+  require(num < block.number - minimumWait();
+  //concat user address with the string and optional salt parameters;
+  //if the hash of _string equals solution and the concatenated value equals userSubmissions[msg.sender] then award the user.
+}
+
+This way, a user commits ahead of time. By requiring a 10 blocks delta, a malicious miner cannot reliably steal the user's input. Optional salt parameter can be used here, if desired. Front end for the dapp should explicitly disallow the user to attempt a reveal if the minimumWait has not elapsed for the user.
+
+2: Uncertain starting conditions.
+The treasure hunt can be funded but never started. It seems the intent here is for a minimum treasure eth to be reached before playing. 
+
+Recommendation: 
+
+```
+function fund() public payable returns (bool) {
+      require(msg.value > 0);
+      TreasureHuntFunded(msg.sender, msg.value);
+      startHunt();
+      return true;
+  }
+
+function minimum() public pure returns (bool) {
+    return 100000000000;
+}
+
+function funded() public view returns (bool) {
+    return this.balance >= minimum();
+}
+
+function startHunt() public returns (bool) {
+   if (funded() == false) {
+      require(msg.sender == developer);
+   }
+   
+   active = true;
+ }
+ ```
